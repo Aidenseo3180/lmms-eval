@@ -1,8 +1,8 @@
 import time
 import warnings
 from typing import List, Optional, Tuple, Union
-from PIL import Image
 
+from PIL import Image
 from tqdm import tqdm
 
 from lmms_eval import utils
@@ -30,11 +30,11 @@ def expand2square(pil_img, background_color):
     """
     Expand image to square by adding padding.
     This matches the original LLaVA preprocessing.
-    
+
     Args:
         pil_img: PIL Image
         background_color: tuple of RGB values (0-255 scale)
-    
+
     Returns:
         PIL Image expanded to square
     """
@@ -85,16 +85,16 @@ class LlavaHf(LlavaHfSimple):
                 videos.append(video)
             visuals = self.flatten(visuals)
             videos = self.flatten(videos)
-            
+
             # Apply padding to all images to match original LLaVA preprocessing
             if len(visuals) > 0:
                 # Get background color from processor's image_mean
-                if hasattr(self._image_processor, 'image_mean'):
+                if hasattr(self._image_processor, "image_mean"):
                     background_color = tuple(int(x * 255) for x in self._image_processor.image_mean)
                 else:
                     # Fallback to default mean values if not available
                     background_color = (123, 116, 103)  # Default ImageNet mean
-                
+
                 # Apply expand2square to all images
                 processed_visuals = []
                 for img in visuals:
@@ -102,10 +102,10 @@ class LlavaHf(LlavaHfSimple):
                         img = expand2square(img, background_color)
                     processed_visuals.append(img)
                 visuals = processed_visuals
-                
+
                 if self.accelerator.is_main_process and doc_id[0] % 100 == 0:
                     eval_logger.debug(f"Applied padding to {len(visuals)} images with background color {background_color}")
-            
+
             assert self.batch_size_per_gpu == 1, "Do not support batch_size_per_gpu > 1 for now"
 
             # Apply chat template
