@@ -1,11 +1,13 @@
 import time
 import warnings
-from typing import List
+from typing import List, Optional, Tuple, Union
+from PIL import Image
 
 from tqdm import tqdm
 
 from lmms_eval import utils
 from lmms_eval.api.instance import Instance
+from lmms_eval.api.model import lmms
 from lmms_eval.api.registry import register_model
 from lmms_eval.models.model_utils.gen_metrics import log_metrics
 from lmms_eval.protocol import ChatMessages
@@ -14,6 +16,7 @@ warnings.filterwarnings("ignore")
 
 from loguru import logger as eval_logger
 
+from lmms_eval.api.registry import register_model
 from lmms_eval.models.simple.llava_hf import LlavaHf as LlavaHfSimple
 
 DEFAULT_IMAGE_TOKEN = "<image>"
@@ -21,6 +24,31 @@ DEFAULT_VIDEO_TOKEN = "<video>"
 
 # Default chat for llava-hf/llava-1.5 models: https://huggingface.co/collections/llava-hf/llava-15-65f762d5b6941db5c2ba07e0
 VICUNA_CHAT_TEMPLATE = "{% for message in messages %}{% if loop.index0 == 0 %}A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: {{ message['content'] }} {% elif message['role'] == 'user' %}USER: {{ message['content'] }} {% else %} ASSISTANT: {{ message['content'] }}{{ eos_token }}{% endif %}{% endfor %}{% if add_generation_prompt %}{{ 'ASSISTANT:' }}{% endif %}"
+
+
+def expand2square(pil_img, background_color):
+    """
+    Expand image to square by adding padding.
+    This matches the original LLaVA preprocessing.
+    
+    Args:
+        pil_img: PIL Image
+        background_color: tuple of RGB values (0-255 scale)
+    
+    Returns:
+        PIL Image expanded to square
+    """
+    width, height = pil_img.size
+    if width == height:
+        return pil_img
+    elif width > height:
+        result = Image.new(pil_img.mode, (width, width), background_color)
+        result.paste(pil_img, (0, (width - height) // 2))
+        return result
+    else:
+        result = Image.new(pil_img.mode, (height, height), background_color)
+        result.paste(pil_img, ((height - width) // 2, 0))
+        return result
 
 
 @register_model("llava_hf_chat")
@@ -41,7 +69,7 @@ class LlavaHf(LlavaHfSimple):
         chunks = re_ords.get_batched(n=self.batch_size, batch_fn=None)
         num_iters = len(requests) // self.batch_size if len(requests) % self.batch_size == 0 else len(requests) // self.batch_size + 1
         pbar = tqdm(total=num_iters, disable=(self.rank != 0), desc="Model Responding")
-        total_elapsed_time = 0
+        e2e_latency = 0
         total_tokens = 0
         for chunk in chunks:
             ctx, doc_to_messages, all_gen_kwargs, doc_id, task, split = zip(*chunk)
@@ -57,6 +85,27 @@ class LlavaHf(LlavaHfSimple):
                 videos.append(video)
             visuals = self.flatten(visuals)
             videos = self.flatten(videos)
+            
+            # Apply padding to all images to match original LLaVA preprocessing
+            if len(visuals) > 0:
+                # Get background color from processor's image_mean
+                if hasattr(self._image_processor, 'image_mean'):
+                    background_color = tuple(int(x * 255) for x in self._image_processor.image_mean)
+                else:
+                    # Fallback to default mean values if not available
+                    background_color = (123, 116, 103)  # Default ImageNet mean
+                
+                # Apply expand2square to all images
+                processed_visuals = []
+                for img in visuals:
+                    if isinstance(img, Image.Image):
+                        img = expand2square(img, background_color)
+                    processed_visuals.append(img)
+                visuals = processed_visuals
+                
+                if self.accelerator.is_main_process and doc_id[0] % 100 == 0:
+                    eval_logger.debug(f"Applied padding to {len(visuals)} images with background color {background_color}")
+            
             assert self.batch_size_per_gpu == 1, "Do not support batch_size_per_gpu > 1 for now"
 
             # Apply chat template
@@ -100,13 +149,13 @@ class LlavaHf(LlavaHfSimple):
                 cont = cont[:, inputs["input_ids"].shape[-1] :]
 
                 # Calculate timing metrics
-                total_elapsed_time += end_time - start_time
+                e2e_latency += end_time - start_time
                 total_tokens += cont.shape[-1] if len(cont.shape) > 1 else len(cont)
 
             except Exception as e:
                 eval_logger.error(f"Error {e} in generating")
                 cont = ""
-                total_elapsed_time += 0
+                e2e_latency += 0
                 total_tokens += 0
 
             text_outputs = self.tokenizer.batch_decode(cont, skip_special_tokens=True)[0] if cont != "" else ""
@@ -121,9 +170,9 @@ class LlavaHf(LlavaHfSimple):
         res = re_ords.get_original(res)
 
         metric_dict = {
-            "total_gen_tokens": total_tokens,
-            "total_elapsed_time": total_elapsed_time,
-            "avg_speed": total_tokens / total_elapsed_time if total_elapsed_time > 0 else 0,
+            "total_tokens": total_tokens,
+            "e2e_latency": e2e_latency,
+            "avg_speed": total_tokens / e2e_latency if e2e_latency > 0 else 0,
             "additional_metrics": {
                 "rank": self.rank,
             },
