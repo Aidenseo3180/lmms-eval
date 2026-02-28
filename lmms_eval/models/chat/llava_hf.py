@@ -1,7 +1,5 @@
 import time
 import warnings
-from typing import List
-from PIL import Image
 from typing import List, Optional, Tuple, Union
 
 from PIL import Image
@@ -24,6 +22,7 @@ DEFAULT_VIDEO_TOKEN = "<video>"
 
 # Default chat for llava-hf/llava-1.5 models: https://huggingface.co/collections/llava-hf/llava-15-65f762d5b6941db5c2ba07e0
 VICUNA_CHAT_TEMPLATE = "{% for message in messages %}{% if loop.index0 == 0 %}A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: {{ message['content'] }} {% elif message['role'] == 'user' %}USER: {{ message['content'] }} {% else %} ASSISTANT: {{ message['content'] }}{{ eos_token }}{% endif %}{% endfor %}{% if add_generation_prompt %}{{ 'ASSISTANT:' }}{% endif %}"
+
 
 def expand2square(pil_img, background_color):
     """
@@ -48,6 +47,7 @@ def expand2square(pil_img, background_color):
         result = Image.new(pil_img.mode, (height, height), background_color)
         result.paste(pil_img, ((height - width) // 2, 0))
         return result
+
 
 @register_model("llava_hf_chat")
 class LlavaHf(LlavaHfSimple):
