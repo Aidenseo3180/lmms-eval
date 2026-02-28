@@ -3,17 +3,16 @@ from typing import List, Optional, Tuple, Union
 
 import numpy as np
 import PIL
-from PIL import Image  # 추가
 import torch
 from accelerate import Accelerator, DistributedType
 from accelerate.state import AcceleratorState
 from decord import VideoReader, cpu
+from PIL import Image  # 추가
 from tqdm import tqdm
-from transformers import (
+from transformers import (  # LlavaNextForConditionalGeneration,
     AutoConfig,
     AutoProcessor,
     LlavaForConditionalGeneration,
-    # LlavaNextForConditionalGeneration,
 )
 
 from lmms_eval import utils
@@ -48,11 +47,11 @@ def expand2square(pil_img, background_color):
     """
     Expand image to square by adding padding.
     This matches the original LLaVA preprocessing.
-    
+
     Args:
         pil_img: PIL Image
         background_color: tuple of RGB values (0-255 scale)
-    
+
     Returns:
         PIL Image expanded to square
     """
@@ -232,13 +231,12 @@ class LlavaHf(lmms):
 
             # Apply padding to images for loglikelihood
             if len(visuals) > 0 and isinstance(visuals[0], PIL.Image.Image):
-                if hasattr(self._image_processor, 'image_mean'):
+                if hasattr(self._image_processor, "image_mean"):
                     background_color = tuple(int(x * 255) for x in self._image_processor.image_mean)
                 else:
                     background_color = (123, 116, 103)
-                
-                visuals = [expand2square(img, background_color) if isinstance(img, PIL.Image.Image) else img 
-                          for img in visuals]
+
+                visuals = [expand2square(img, background_color) if isinstance(img, PIL.Image.Image) else img for img in visuals]
 
             image_tokens = [DEFAULT_IMAGE_TOKEN] * len(visuals)
             image_tokens = " ".join(image_tokens)
@@ -326,16 +324,16 @@ class LlavaHf(lmms):
             split = split[0]
             visuals = [doc_to_visual[0](self.task_dict[task][split][ids]) for ids in doc_id]
             visuals = self.flatten(visuals)
-            
+
             # Apply padding to all images to match original LLaVA preprocessing
             if len(visuals) > 0 and isinstance(visuals[0], PIL.Image.Image):
                 # Get background color from processor's image_mean
-                if hasattr(self._image_processor, 'image_mean'):
+                if hasattr(self._image_processor, "image_mean"):
                     background_color = tuple(int(x * 255) for x in self._image_processor.image_mean)
                 else:
                     # Fallback to default mean values if not available
                     background_color = (123, 116, 103)  # Default ImageNet mean
-                
+
                 # Apply expand2square to all images
                 processed_visuals = []
                 for img in visuals:
@@ -343,10 +341,10 @@ class LlavaHf(lmms):
                         img = expand2square(img, background_color)
                     processed_visuals.append(img)
                 visuals = processed_visuals
-                
+
                 if self.accelerator.is_main_process and doc_id[0] % 100 == 0:
                     eval_logger.debug(f"Applied padding to {len(visuals)} images with background color {background_color}")
-            
+
             if len(visuals) == 0:
                 task_type = "text"
             elif isinstance(visuals[0], PIL.Image.Image):
